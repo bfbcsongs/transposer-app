@@ -1,0 +1,841 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#121212">
+<title>Chord Transposer & Live Share</title>
+
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+
+<style>
+* { box-sizing:border-box; margin:0; padding:0; }
+
+body {
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  background:#121212;
+  color:#e0e0e0;
+  padding:15px;
+}
+
+.container {
+  max-width:700px;
+  margin:auto;
+  display:flex;
+  flex-direction:column;
+  gap:15px;
+}
+
+.card {
+  background:#1e1e1e;
+  border:1px solid #333;
+  border-radius:10px;
+  padding:15px;
+}
+
+h2 {
+  font-size:1.05rem;
+  margin-bottom:12px;
+  color:#4dabf7;
+}
+
+.controls {
+  display:flex;
+  gap:8px;
+  align-items:center;
+  flex-wrap:wrap;
+}
+
+button {
+  background:#2b2b2b;
+  color:white;
+  border:1px solid #444;
+  padding:10px 14px;
+  border-radius:6px;
+  font-weight:bold;
+  cursor:pointer;
+}
+
+button:active {
+  background:#4dabf7;
+  color:#000;
+}
+
+button:disabled {
+  opacity:.4;
+  cursor:not-allowed;
+}
+
+input {
+  background:#121212;
+  border:1px solid #444;
+  color:white;
+  padding:10px;
+  border-radius:6px;
+  width:110px;
+  text-align:center;
+  font-size:16px;
+}
+
+textarea {
+  width:100%;
+  min-height:220px;
+  background:#121212;
+  color:#e0e0e0;
+  border:1px solid #333;
+  border-radius:6px;
+  padding:12px;
+  font-family:monospace;
+  font-size:15px;
+  resize:vertical;
+  line-height:1.6;
+}
+
+pre {
+  background:#121212;
+  border:1px solid #333;
+  border-radius:6px;
+  padding:15px;
+  font-family:monospace;
+  font-size:16px;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  line-height:1.8;
+  min-height:180px;
+  overflow-x:auto;
+}
+
+.chord {
+  color:#ffd43b;
+  font-weight:bold;
+}
+
+.status {
+  font-size:.85rem;
+  color:#aaa;
+  margin-top:12px;
+  line-height:1.5;
+  overflow-wrap:anywhere;
+}
+
+.code-display {
+  display:block;
+  font-size:1.8rem;
+  font-weight:bold;
+  letter-spacing:5px;
+  color:#51cf66;
+  margin-top:6px;
+}
+
+.key-value {
+  font-weight:bold;
+  width:45px;
+  text-align:center;
+  font-size:18px;
+}
+
+.output-title {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+}
+
+.output-title h2 { margin:0; }
+
+.small-button {
+  font-size:12px;
+  padding:6px 10px;
+}
+
+.viewer-label {
+  color:#51cf66;
+  font-size:12px;
+  font-weight:bold;
+}
+
+@media(max-width:420px) {
+  body { padding:9px; }
+  .card { padding:12px; }
+  button { padding:9px 11px; }
+  pre { font-size:14px; }
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+  <!-- CONNECTION -->
+  <div class="card">
+    <h2>Screen Share Sync</h2>
+
+    <div class="controls">
+      <button id="hostBtn" onclick="startHost()">Host (Get Code)</button>
+
+      <input
+        type="text"
+        id="joinCode"
+        placeholder="4-digit code"
+        maxlength="4"
+        inputmode="numeric"
+        pattern="[0-9]*"
+      >
+
+      <button id="joinBtn" onclick="joinHost()">Join Screen</button>
+      <button id="disconnectBtn" onclick="disconnect()" hidden>Disconnect</button>
+    </div>
+
+    <div class="status" id="connectionStatus">
+      Status: Offline / Standalone
+    </div>
+  </div>
+
+  <!-- TRANSPOSE -->
+  <div class="card" id="transposeCard">
+    <h2>Transpose</h2>
+
+    <div class="controls">
+      <button onclick="transpose(-1)">− Key</button>
+
+      <span class="key-value" id="keyOffset">0</span>
+
+      <button onclick="transpose(1)">+ Key</button>
+
+      <button onclick="resetKey()" style="margin-left:auto">Reset</button>
+    </div>
+  </div>
+
+  <!-- EDITOR -->
+  <div class="card" id="editorCard">
+    <h2>Chords & Lyrics Input</h2>
+
+    <textarea
+      id="chordInput"
+      placeholder="Type or paste song here...
+
+Example:
+[C]Amazing [G]Grace how [Am]sweet the [F]sound
+
+[Dm]Through many [C]dangers..."
+      oninput="onTextChange()"
+      spellcheck="false"
+    ></textarea>
+  </div>
+
+  <!-- OUTPUT -->
+  <div class="card">
+
+    <div class="output-title">
+      <h2>Live Display Output</h2>
+      <span id="viewerLabel" class="viewer-label"></span>
+    </div>
+
+    <pre id="chordOutput"></pre>
+
+  </div>
+
+</div>
+
+<script>
+
+// ======================================================
+// CONFIGURATION
+// ======================================================
+
+const NOTES = [
+  'C','C#','D','D#','E','F',
+  'F#','G','G#','A','A#','B'
+];
+
+const FLAT_MAP = {
+  'Db':'C#',
+  'Eb':'D#',
+  'Gb':'F#',
+  'Ab':'G#',
+  'Bb':'A#'
+};
+
+// Recognized chord suffix components.
+const SUFFIX_PATTERN =
+  /^(?:(?:maj|min|dim|aug|sus|add|no|m|M|ø|°|6|7|9|11|13|5|2|4|#|b|\+|-|\(|\)))*$/;
+
+let currentOffset = 0;
+let rawText = '';
+
+let peer = null;
+let activeConnections = new Set();
+let viewerConnection = null;
+
+let isHost = false;
+let isViewer = false;
+let isConnecting = false;
+
+let sessionCode = null;
+let connectionAttempt = 0;
+
+
+// ======================================================
+// CHORD PARSING
+// ======================================================
+
+function normalizeNote(note) {
+  return FLAT_MAP[note] || note;
+}
+
+function transposeNote(note, semitones) {
+
+  const normalized = normalizeNote(note);
+  const index = NOTES.indexOf(normalized);
+
+  if (index === -1) return note;
+
+  const newIndex = ((index + semitones) % 12 + 12) % 12;
+
+  return NOTES[newIndex];
+}
+
+function transposeChord(chord, semitones) {
+
+  // Separate root, suffix and optional bass note.
+  const match = chord.match(
+    /^([A-G](?:#|b)?)(.*?)(?:\/([A-G](?:#|b)?))?$/
+  );
+
+  if (!match) return chord;
+
+  const root = match[1];
+  const suffix = match[2];
+  const bass = match[3];
+
+  // Reject anything that is not a recognized chord suffix.
+  if (!SUFFIX_PATTERN.test(suffix)) return chord;
+
+  let result = transposeNote(root, semitones) + suffix;
+
+  if (bass) {
+    result += '/' + transposeNote(bass, semitones);
+  }
+
+  return result;
+}
+
+function isValidChord(chord) {
+
+  const match = chord.match(
+    /^([A-G](?:#|b)?)(.*?)(?:\/([A-G](?:#|b)?))?$/
+  );
+
+  return !!match && SUFFIX_PATTERN.test(match[2]);
+}
+
+
+// ======================================================
+// SAFE TEXT RENDERING
+// ======================================================
+
+function renderText() {
+
+  const output = document.getElementById('chordOutput');
+
+  // Never insert user-provided lyrics using innerHTML.
+  output.replaceChildren();
+
+  document.getElementById('keyOffset').textContent =
+    (currentOffset > 0 ? '+' : '') + currentOffset;
+
+  if (!rawText) {
+    sendState();
+    return;
+  }
+
+  // Only recognized bracketed chords are highlighted.
+  const fragment = document.createDocumentFragment();
+
+  const regex = /\[([^\]\r\n]+)\]/g;
+
+  let lastIndex = 0;
+  let match;
+
+  while ((match = regex.exec(rawText)) !== null) {
+
+    // Ordinary lyrics before the chord.
+    fragment.appendChild(
+      document.createTextNode(
+        rawText.slice(lastIndex, match.index)
+      )
+    );
+
+    const chord = match[1];
+
+    if (isValidChord(chord)) {
+
+      const span = document.createElement('span');
+
+      span.className = 'chord';
+
+      span.textContent =
+        '[' + transposeChord(chord, currentOffset) + ']';
+
+      fragment.appendChild(span);
+
+    } else {
+
+      // Keep unrecognized brackets as ordinary text.
+      fragment.appendChild(
+        document.createTextNode(match[0])
+      );
+    }
+
+    lastIndex = regex.lastIndex;
+  }
+
+  fragment.appendChild(
+    document.createTextNode(rawText.slice(lastIndex))
+  );
+
+  output.appendChild(fragment);
+
+  sendState();
+}
+
+
+// ======================================================
+// TEXT INPUT
+// ======================================================
+
+function onTextChange() {
+
+  if (isViewer) return;
+
+  rawText = document.getElementById('chordInput').value;
+
+  renderText();
+}
+
+
+// ======================================================
+// TRANSPOSE CONTROLS
+// ======================================================
+
+function transpose(delta) {
+
+  if (isViewer) return;
+
+  currentOffset += delta;
+
+  renderText();
+}
+
+function resetKey() {
+
+  if (isViewer) return;
+
+  currentOffset = 0;
+
+  renderText();
+}
+
+
+// ======================================================
+// LIVE STATE
+// ======================================================
+
+function getState() {
+
+  return {
+    type: 'song-update',
+    text: rawText,
+    offset: currentOffset
+  };
+}
+
+function sendState() {
+
+  if (!isHost) return;
+
+  const state = getState();
+
+  for (const conn of activeConnections) {
+
+    if (conn.open) {
+
+      try {
+        conn.send(state);
+      } catch (error) {
+        console.warn('Send failed:', error);
+      }
+
+    }
+  }
+}
+
+
+// ======================================================
+// HOST CONNECTION MANAGEMENT
+// ======================================================
+
+function startHost() {
+
+  if (peer || isConnecting) {
+    return;
+  }
+
+  if (typeof Peer === 'undefined') {
+    setStatus('PeerJS could not load. Check your internet connection.');
+    return;
+  }
+
+  isHost = true;
+  isViewer = false;
+  isConnecting = true;
+
+  document.getElementById('hostBtn').disabled = true;
+  document.getElementById('joinBtn').disabled = true;
+
+  setStatus('Generating host code...');
+
+  createHostPeer();
+}
+
+function createHostPeer() {
+
+  // Four-digit session code.
+  const randomCode = Math.floor(
+    1000 + Math.random() * 9000
+  ).toString();
+
+  const newPeer = new Peer('chord-app-' + randomCode);
+
+  peer = newPeer;
+  sessionCode = randomCode;
+
+  newPeer.on('open', function(id) {
+
+    if (peer !== newPeer) return;
+
+    isConnecting = false;
+
+    document.getElementById('hostBtn').disabled = false;
+    document.getElementById('disconnectBtn').hidden = false;
+
+    document.getElementById('connectionStatus').innerHTML =
+      'Hosting! Share this code with the secondary device:';
+
+    const code = document.createElement('span');
+
+    code.className = 'code-display';
+    code.textContent = randomCode;
+
+    document.getElementById('connectionStatus').appendChild(code);
+
+    updateHostStatus();
+  });
+
+  newPeer.on('connection', function(conn) {
+
+    if (peer !== newPeer) {
+      conn.close();
+      return;
+    }
+
+    activeConnections.add(conn);
+
+    conn.on('open', function() {
+
+      updateHostStatus();
+
+      // Send current song and transpose state immediately.
+      try {
+        conn.send(getState());
+      } catch (error) {
+        console.warn(error);
+      }
+
+    });
+
+    conn.on('close', function() {
+
+      activeConnections.delete(conn);
+
+      updateHostStatus();
+    });
+
+    conn.on('error', function(error) {
+
+      console.warn('Viewer connection error:', error);
+
+      activeConnections.delete(conn);
+
+      updateHostStatus();
+    });
+
+  });
+
+  newPeer.on('error', function(error) {
+
+    console.error('Host error:', error);
+
+    if (peer !== newPeer) return;
+
+    isConnecting = false;
+
+    if (error.type === 'unavailable-id') {
+
+      // Retry with another code if the ID is already in use.
+      newPeer.destroy();
+      peer = null;
+      createHostPeer();
+      return;
+    }
+
+    setStatus('Host error: ' + error.type);
+
+    cleanupPeer();
+
+  });
+
+  newPeer.on('disconnected', function() {
+
+    if (peer !== newPeer) return;
+
+    setStatus('Signaling server disconnected. Reconnecting...');
+
+    if (!newPeer.destroyed) {
+      newPeer.reconnect();
+    }
+
+  });
+}
+
+function updateHostStatus() {
+
+  const count = activeConnections.size;
+
+  setStatus(
+    'Hosting | ' + sessionCode +
+    ' | Connected viewers: ' + count
+  );
+}
+
+
+// ======================================================
+// VIEWER CONNECTION
+// ======================================================
+
+function joinHost() {
+
+  if (peer || isConnecting) return;
+
+  if (typeof Peer === 'undefined') {
+    setStatus('PeerJS could not load. Check your internet connection.');
+    return;
+  }
+
+  const code = document.getElementById('joinCode')
+    .value.trim();
+
+  if (!/^\d{4}$/.test(code)) {
+
+    alert('Please enter a valid 4-digit code.');
+
+    return;
+  }
+
+  isHost = false;
+  isViewer = false;
+  isConnecting = true;
+
+  const attempt = ++connectionAttempt;
+
+  document.getElementById('joinBtn').disabled = true;
+  document.getElementById('hostBtn').disabled = true;
+
+  setStatus('Connecting to host...');
+
+  const newPeer = new Peer();
+
+  peer = newPeer;
+
+  newPeer.on('open', function() {
+
+    if (peer !== newPeer || attempt !== connectionAttempt) return;
+
+    const conn = newPeer.connect(
+      'chord-app-' + code,
+      { reliable: true }
+    );
+
+    viewerConnection = conn;
+
+    conn.on('open', function() {
+
+      if (peer !== newPeer) return;
+
+      isConnecting = false;
+      isViewer = true;
+
+      document.getElementById('editorCard').hidden = true;
+      document.getElementById('transposeCard').hidden = true;
+
+      document.getElementById('viewerLabel').textContent =
+        'LIVE VIEWER';
+
+      document.getElementById('disconnectBtn').hidden = false;
+
+      setStatus('Connected! Viewing live screen.');
+
+    });
+
+    conn.on('data', function(data) {
+
+      if (!isViewer && !conn.open) return;
+
+      if (
+        !data ||
+        data.type !== 'song-update' ||
+        typeof data.text !== 'string' ||
+        !Number.isFinite(data.offset)
+      ) {
+        return;
+      }
+
+      rawText = data.text;
+      currentOffset = data.offset;
+
+      renderText();
+
+    });
+
+    conn.on('close', function() {
+
+      if (peer !== newPeer) return;
+
+      isViewer = false;
+      isConnecting = false;
+
+      setStatus('Host disconnected.');
+
+      document.getElementById('joinBtn').disabled = false;
+      document.getElementById('hostBtn').disabled = false;
+
+      document.getElementById('editorCard').hidden = false;
+      document.getElementById('transposeCard').hidden = false;
+
+      document.getElementById('viewerLabel').textContent = '';
+
+    });
+
+    conn.on('error', function(error) {
+
+      console.warn('Connection error:', error);
+
+      setStatus('Connection error. Check the code and try again.');
+
+    });
+
+  });
+
+  newPeer.on('error', function(error) {
+
+    if (peer !== newPeer) return;
+
+    console.error(error);
+
+    isConnecting = false;
+
+    setStatus('Connection failed: ' + error.type);
+
+    cleanupPeer();
+
+  });
+
+  newPeer.on('disconnected', function() {
+
+    if (peer !== newPeer) return;
+
+    setStatus('Signaling server disconnected. Reconnecting...');
+
+    if (!newPeer.destroyed) {
+      newPeer.reconnect();
+    }
+
+  });
+}
+
+
+// ======================================================
+// DISCONNECT AND CLEANUP
+// ======================================================
+
+function disconnect() {
+
+  connectionAttempt++;
+
+  cleanupPeer();
+
+  isHost = false;
+  isViewer = false;
+  isConnecting = false;
+
+  activeConnections.clear();
+  viewerConnection = null;
+  sessionCode = null;
+
+  document.getElementById('editorCard').hidden = false;
+  document.getElementById('transposeCard').hidden = false;
+
+  document.getElementById('viewerLabel').textContent = '';
+
+  document.getElementById('hostBtn').disabled = false;
+  document.getElementById('joinBtn').disabled = false;
+
+  document.getElementById('disconnectBtn').hidden = true;
+
+  setStatus('Disconnected. Standalone mode.');
+
+}
+
+function cleanupPeer() {
+
+  if (!peer) return;
+
+  const oldPeer = peer;
+
+  peer = null;
+
+  try {
+    oldPeer.destroy();
+  } catch (error) {
+    console.warn(error);
+  }
+
+}
+
+function setStatus(message) {
+
+  document.getElementById('connectionStatus').textContent =
+    'Status: ' + message;
+
+}
+
+
+// ======================================================
+// INITIALIZATION
+// ======================================================
+
+document.getElementById('joinCode').addEventListener(
+  'input',
+  function() {
+    this.value = this.value.replace(/\D/g, '').slice(0, 4);
+  }
+);
+
+renderText();
+
+</script>
+
+</body>
+</html>
